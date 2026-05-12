@@ -76,15 +76,17 @@ class D1WorkerClient:
             "events": [self._event_to_dict(e) for e in events],
         }
 
+        sync_url = self.endpoint_url.rstrip("/") + "/sync"
         try:
             with httpx.Client(timeout=60) as client:
                 resp = client.post(
-                    self.endpoint_url,
+                    sync_url,
                     headers=self._headers(),
                     json=payload,
                 )
                 resp.raise_for_status()
-                return resp.json()
+                body = resp.json()
+                return body.get("results", body)
         except httpx.HTTPError as e:
             log.error("D1 push failed: %s", e)
             return {ev.event_id: f"transport_error: {e}" for ev in events}
