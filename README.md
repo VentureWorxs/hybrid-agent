@@ -1,10 +1,6 @@
 # hybrid-agent
 
-A hybrid inference routing system for Claude Code that routes tasks between Claude API (complex work) and a local Ollama/Qwen3-235B-A22B instance (bulk/sensitive tasks). Built across three ADR layers:
-
-- **ADR-001** — MCP bridge: exposes Ollama as Claude Code tools via stdio MCP server
-- **ADR-001.1** — Orchestration, decision cache, and dual-backend audit log (local SQLite + Cloudflare D1)
-- **ADR-002.0** — Operating modes (baseline/hybrid/shadow), KPI scorecard
+A hybrid inference routing system for Claude Code that routes tasks between Claude API (complex work) and a local Ollama/Qwen3-235B-A22B instance (bulk/sensitive tasks). See [ARCHITECTURE.md](ARCHITECTURE.md) for full design rationale.
 
 ---
 
@@ -112,4 +108,4 @@ cd worker && npm install && wrangler deploy
 4. Set `SYNC_ENDPOINT_URL` and Cloudflare Access credentials in `.env` (copy from `.env.example`)
 5. Start the sync worker: `python -m audit.sync_worker --tenant sam-personal`
 
-See [CLAUDE.md](CLAUDE.md) for full architecture reference.
+See [CLAUDE.md](CLAUDE.md) for commands and [ARCHITECTURE.md](ARCHITECTURE.md) for design decisions.

@@ -12,18 +12,40 @@ A hybrid inference routing system for Claude Code that routes tasks between Clau
 
 ## Setup
 
+```bash
+# macOS
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
 ```powershell
 # Windows
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+```
 
+```bash
 # Bootstrap DB and machine identity (run once per machine)
 python -m audit.bootstrap --tenant sam-personal
 
 # Start MCP server (Claude Code does this automatically via .claude/settings.json)
 python mcp_ollama_server.py
 ```
+
+### Environment Variables
+
+Copy `.env.example` to `.env` and fill in values before running the sync worker:
+
+| Variable | Purpose |
+|----------|---------|
+| `SYNC_ENDPOINT_URL` | Cloudflare Worker URL (from `wrangler deploy` output) |
+| `CF_ACCESS_CLIENT_ID` | CF Zero Trust service token client ID |
+| `CF_ACCESS_CLIENT_SECRET` | CF Zero Trust service token secret |
+| `HYBRID_AGENT_DB_PATH` | Override default `~/.hybrid-agent/audit.db` |
+| `HYBRID_AGENT_TENANT` | Override default tenant (`sam-personal`) |
+| `AGENT_VERSION` | Bumped on each release (default: `1.1.0`) |
 
 ## Common Commands
 
@@ -81,13 +103,35 @@ scorecard/cli.py              ← CLI output (table/markdown/JSON)
 | Directory | Purpose |
 |-----------|---------|
 | `audit/` | Append-only event log, hash chain, SQLite/D1 storage, sanitization, sync |
-| `orchestrator/` | Task classification, routing rules, compliance boundary, decision cache, DAG executor |
+| `orchestrator/` | Task classification, routing rules, compliance boundary, decision cache, async DAG executor |
 | `modes/` | TOML config loader, mode controller (baseline/hybrid/shadow), shadow runner |
 | `scorecard/` | Epoch detection, KPI calculators (A–E), scorecard generator, CLI/Markdown/JSON formatters |
 | `schema/migrations/` | Forward-only SQL migrations (001–005); applied by `audit.migrate` |
 | `worker/` | TypeScript Cloudflare Worker receiving sync batches from the local agent |
 | `skills/` | Claude Code SKILL.md for routing guidance |
 | `prompts/` | Reusable prompt templates for Ollama delegation |
+
+## Routing Logic
+
+Tasks are classified by `TaskClassifier` on two axes before hitting the `ComplianceBoundary`:
+
+**Complexity** (0–10, heuristic keyword match against the action string):
+
+| Score | Task types |
+|-------|-----------|
+| 1–2 | status_check, data_extraction, template_fill, summarize |
+| 3 | classification, doc_generation |
+| 5 | pattern_analysis, comparison |
+| 6–10 | code_review, multi_step_reasoning, strategic_recommendation, novel_problem, architectural_decision |
+
+`OLLAMA_COMPLEXITY_THRESHOLD = 3` — tasks scoring ≤ 3 are proposed to `ollama-local`; higher scores propose `claude-api`. The compliance boundary then overrides as needed.
+
+**Sensitivity routing overrides** (always wins over complexity):
+
+| Sensitivity | Allowed routes |
+|-------------|---------------|
+| `public`, `internal` | `ollama-local` or `claude-api` |
+| `confidential`, `sensitive_phi` | `ollama-local` only |
 
 ## Configuration Hierarchy
 
@@ -117,8 +161,14 @@ Three operating modes: `baseline` (all → Claude), `hybrid` (smart routing), `s
 ## Cloudflare Worker
 
 Sync endpoint: `POST /sync` — receives sanitized event batches from `audit.sync_worker`.  
-Auth: Cloudflare Access (JWT assertion header, or service token `CF-Access-Client-Id/Secret`).  
-Deploy: `cd worker && wrangler deploy`. Fill in `database_id` and `CF_ACCESS_AUD` in `worker/wrangler.toml`.
+Auth: Cloudflare Access (JWT assertion header, or service token `CF-Access-Client-Id/Secret`).
+
+First-time deploy:
+```bash
+wrangler d1 create hybrid-agent-audit   # copy database_id into worker/wrangler.toml
+# Fill in CF_ACCESS_AUD in worker/wrangler.toml, then:
+cd worker && npm install && wrangler deploy
+```
 
 ## Tenants
 
@@ -142,9 +192,23 @@ Deploy: `cd worker && wrangler deploy`. Fill in `database_id` and `CF_ACCESS_AUD
 | `verify_audit_chain` | Check hash-chain integrity |
 | `get_scorecard` | Retrieve KPI scorecard mid-session |
 
+## KPI Reference (Scorecard)
+
+| ID | Name | Measures |
+|----|------|---------|
+| A | `tokens_used` | Actual vs. estimated Claude tokens; cost savings % |
+| B | `throughput` | Tasks/hour, median/p95 latency by route |
+| C | `approval_rate` | % of approval requests granted vs. denied |
+| D | `system_error_rate` | System errors per 1,000 tasks started |
+| E | `boundary_enforcement` | Compliance boundary enforcement count; PHI violations |
+
+## Design Document
+
+[ARCHITECTURE.md](ARCHITECTURE.md) is the canonical source of design decisions: context, rationale, rejected alternatives, schema reference, KPI catalog, operating modes, compliance rules, and future work.
+
 ## Platform Notes
 
 - Python 3.11+ required (uses stdlib `tomllib`)
 - Windows: use `.venv\Scripts\Activate.ps1`; Ollama runs as a Windows service
-- macOS: use `python3`/`.venv/bin/python`; Ollama via `brew install ollama`
-- Both platforms: `python mcp_ollama_server.py` must resolve to the venv Python
+- macOS: `brew install ollama`; use `python3`/`.venv/bin/activate`
+- The `python` command in `.claude/settings.json` must resolve to the venv Python
