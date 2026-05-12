@@ -1,0 +1,11 @@
+name = "hybrid-agent-audit-sync"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+
+[[d1_databases]]
+binding = "AUDIT_DB"
+database_name = "hybrid-agent-audit"
+database_id = "<your-database-id>"   # from: wrangler d1 create hybrid-agent-audit
+
+[vars]
+CF_ACCESS_AUD = "<your-cf-access-application-aud-tag>"
