@@ -151,6 +151,11 @@ activemq-data/
 .env
 .envrc
 .venv
+
+# Wrangler local state
+.wrangler/
+worker/.wrangler/
+worker/node_modules/
 env/
 venv/
 ENV/

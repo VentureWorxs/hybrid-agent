@@ -11,6 +11,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from .d1_client import D1WorkerClient
 from .sanitization import SanitizationPipeline
 from .sqlite_storage import SQLiteAuditStorage

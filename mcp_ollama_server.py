@@ -10,6 +10,9 @@ import sys
 import uuid
 from pathlib import Path
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import httpx
 from mcp.server import Server
 from mcp.server.stdio import stdio_server

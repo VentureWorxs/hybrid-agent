@@ -12,6 +12,9 @@ import argparse
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+load_dotenv()
+
 DEFAULT_DB = Path.home() / ".hybrid-agent" / "audit.db"
 
 

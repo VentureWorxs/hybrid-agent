@@ -5,7 +5,7 @@ compatibility_date = "2026-01-01"
 [[d1_databases]]
 binding = "AUDIT_DB"
 database_name = "hybrid-agent-audit"
-database_id = "<your-database-id>"   # from: wrangler d1 create hybrid-agent-audit
+database_id = "4d34d441-08e0-434d-8ffb-6e473673373b"
 
 [vars]
-CF_ACCESS_AUD = "<your-cf-access-application-aud-tag>"
+CF_ACCESS_AUD = "221b9675-15d4-4c3c-aecf-e782ffbe2e04"
