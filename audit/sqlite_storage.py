@@ -159,6 +159,10 @@ class SQLiteAuditStorage(AuditStorage):
         row = self._conn.execute(sql, params).fetchone()
         return dict(row) if row else None
 
+    def execute_fetchall(self, sql: str, params: tuple = ()) -> list[dict]:
+        rows = self._conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
     def execute(self, sql: str, params: tuple = ()) -> None:
         self._conn.execute(sql, params)
 

@@ -227,6 +227,88 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="check_approval_history",
+            description=(
+                "Check how many times a specific tool action has been approved historically. "
+                "Call this BEFORE invoking a tool that may trigger a permission prompt — "
+                "use the result to decide whether to proceed, warn the user, or suggest "
+                "adding the pattern to the allowlist. "
+                "Returns: approved_count, last_seen, recommendation "
+                "(add_to_allowlist | proceed | expect_prompt), and a suggested allowlist rule."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "tool_name": {
+                        "type": "string",
+                        "description": "Claude Code tool name, e.g. 'Bash', 'Read', 'Write'.",
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": (
+                            "Substring to search in action history, e.g. 'wrangler d1', "
+                            "'git commit', '/Users/samc/Projects'. Keep it short — "
+                            "this is a LIKE %pattern% match."
+                        ),
+                    },
+                    "tenant_id": {"type": "string"},
+                    "lookback_days": {
+                        "type": "integer",
+                        "description": "How far back to search. Default 30.",
+                        "default": 30,
+                    },
+                },
+                "required": ["tool_name", "pattern"],
+            },
+        ),
+        Tool(
+            name="suggest_allowlist",
+            description=(
+                "Analyse approval history and return patterns that are ready to be promoted "
+                "to the Claude Code allowlist (settings.json permissions.allow). "
+                "Call this at the start of a session or when permission prompts feel repetitive. "
+                "Returns a ranked list of rules with confidence levels. "
+                "Already-covered patterns are automatically excluded."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "tenant_id": {"type": "string"},
+                    "min_approvals": {
+                        "type": "integer",
+                        "description": "Minimum approval count to include a suggestion. Default 3.",
+                        "default": 3,
+                    },
+                    "lookback_days": {
+                        "type": "integer",
+                        "description": "History window in days. Default 90.",
+                        "default": 90,
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="sync_now",
+            description=(
+                "Trigger an immediate sync of local audit events to Cloudflare D1. "
+                "Normally sync runs automatically every 5 minutes; use this to push events immediately. "
+                "PHI events are dropped by the sanitization pipeline and never leave the machine. "
+                "Requires SYNC_ENDPOINT_URL to be set in the environment."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "batch_size": {
+                        "type": "integer",
+                        "description": "Maximum events to sync in this pass.",
+                        "default": 100,
+                    },
+                },
+                "required": [],
+            },
+        ),
+        Tool(
             name="get_scorecard",
             description=(
                 "Retrieve a KPI scorecard for the hybrid agent. "
@@ -345,6 +427,66 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 return [TextContent(type="text", text=json.dumps({"error": "Storage not available"}))]
             valid, error = _storage.verify_chain(arguments["machine_id"])
             return [TextContent(type="text", text=json.dumps({"valid": valid, "error": error}))]
+
+        if name == "check_approval_history":
+            _init_audit()
+            if not _storage:
+                return [TextContent(type="text", text=json.dumps({"error": "Storage not available"}))]
+            from audit.permission_advisor import check_approval_history
+            result = check_approval_history(
+                storage=_storage,
+                tenant_id=arguments.get("tenant_id", TENANT_ID),
+                tool_name=arguments["tool_name"],
+                pattern=arguments["pattern"],
+                lookback_days=arguments.get("lookback_days", 30),
+            )
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        if name == "suggest_allowlist":
+            _init_audit()
+            if not _storage:
+                return [TextContent(type="text", text=json.dumps({"error": "Storage not available"}))]
+            from audit.permission_advisor import suggest_allowlist
+            import os as _os
+            from pathlib import Path as _Path
+            # Load current allowlist so already-covered patterns are excluded
+            try:
+                settings_path = _Path.home() / ".claude" / "settings.json"
+                current_allowlist = json.loads(settings_path.read_text()).get("permissions", {}).get("allow", [])
+            except Exception:
+                current_allowlist = []
+            result = suggest_allowlist(
+                storage=_storage,
+                tenant_id=arguments.get("tenant_id", TENANT_ID),
+                min_approvals=arguments.get("min_approvals", 3),
+                lookback_days=arguments.get("lookback_days", 90),
+                current_allowlist=current_allowlist,
+            )
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        if name == "sync_now":
+            _init_audit()
+            if not _storage:
+                return [TextContent(type="text", text=json.dumps({"error": "Storage not available"}))]
+            endpoint = os.environ.get("SYNC_ENDPOINT_URL")
+            if not endpoint:
+                return [TextContent(type="text", text=json.dumps({"error": "SYNC_ENDPOINT_URL not set in environment"}))]
+            from audit.sync_worker import sync_once
+            from audit.sanitization import SanitizationPipeline
+            from audit.d1_client import D1WorkerClient
+            batch_size = arguments.get("batch_size", 100)
+            pending_before = len(_storage.get_unsynced(limit=batch_size + 1))
+            sanitizer = SanitizationPipeline()
+            d1_client = D1WorkerClient(endpoint_url=endpoint)
+            synced = sync_once(_storage, sanitizer, d1_client, batch_size)
+            pending_after = len(_storage.get_unsynced(limit=batch_size + 1))
+            return [TextContent(type="text", text=json.dumps({
+                "status": "ok",
+                "synced": synced,
+                "pending_before": pending_before,
+                "pending_after": pending_after,
+                "has_more": pending_after > 0,
+            }))]
 
         if name == "get_scorecard":
             _init_audit()

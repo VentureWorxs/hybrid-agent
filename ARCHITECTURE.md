@@ -363,13 +363,182 @@ D1 stores sanitized-only data for Propel. Cloudflare's BAA does not need to cove
 
 ---
 
+## Permission Capture via Claude Code Hooks
+
+**Added:** 2026-05-12  
+**File:** `hooks/audit_tool_use.py`
+
+### Problem
+
+The `approval_requested` / `approval_granted` / `approval_denied` event types existed in the schema and KPI catalog (KPI C — Approval Rate) but were never populated. Claude Code's native permission prompt system operates outside the MCP server, so the `audit_log_event` tool had no way to observe these decisions.
+
+### Solution
+
+A `PreToolUse` hook shim registered in `~/.claude/settings.json`. Claude Code fires `PreToolUse` before every tool call; the shim decides whether to log based on allowlist state.
+
+**Hook payload (from Claude Code, via stdin):**
+```json
+{
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": { "command": "..." },
+  "session_id": "<uuid>"
+}
+```
+
+**Logic:**
+```
+PreToolUse fires
+  ├── tool starts with "mcp__ollama-bridge__"  → skip (already logged by audit_log_event)
+  ├── tool matches allowlist rule               → skip (auto-approved, no prompt shown)
+  └── tool NOT in allowlist                    → user was prompted
+        ├── log  approval_requested  (actor=claude-code, approval_status=pending)
+        └── log  approval_granted    (actor=user, approval_status=granted)
+            ↑ hook firing proves the user said yes
+```
+
+**Why denied prompts are not captured:** If the user denies a permission prompt, Claude Code cancels the tool call before `PreToolUse` fires. There is no hook event for denial. As a result, `approval_rate_pct` in the dashboard represents "granted / (granted + 0)" — it will read 100% until a denial mechanism is added. The count of `approval_requested` events is still useful as an absolute measure of prompt frequency.
+
+**Fast path:** Tools in the allowlist exit before importing any Python modules (`sys.exit(0)` after reading `settings.json`). Overhead on auto-approved calls is ~5 ms (JSON parse + allowlist scan). On prompted calls the SQLite write adds ~20–30 ms, which is unnoticeable relative to human approval time.
+
+**Session continuity:** The shim uses Claude Code's `session_id` from the hook payload, so permission events group with `agent_invoked`, `task_started`, and `task_completed` events from the same session.
+
+**MCP tools skipped by fast path:** `mcp__ollama-bridge__*` tools are skipped explicitly because `audit_log_event` already records those invocations with richer metadata (tokens, cost, routing). Logging them in the hook shim too would double-count.
+
+### Configuration
+
+Registered globally in `~/.claude/settings.json`:
+```json
+{
+  "hooks": {
+    "PreToolUse": [{
+      "hooks": [{
+        "type": "command",
+        "command": "/path/to/hybrid-agent/.venv/bin/python /path/to/hybrid-agent/hooks/audit_tool_use.py"
+      }]
+    }]
+  }
+}
+```
+
+The shim always exits `0` — audit failures are printed to stderr but never block tool execution.
+
+### Effect on KPI C (Approval Rate)
+
+The Permission Prompts panel on the venworxs dashboard now shows:
+- **Total prompts** — count of `approval_requested` events in the period
+- **Approval rate** — always 100% until denial capture is possible
+- **Trend** — the real signal: prompt count should decrease over time as the allowlist grows
+
+A decreasing prompt count across epochs proves the hybrid-agent is reducing friction, which is one of the three original goals (no persistent routing memory, no audit trail, no measurement).
+
+---
+
+## Permission Optimization Loop
+
+**Added:** 2026-05-12  
+**Files:** `audit/permission_advisor.py`, `audit/sqlite_storage.py` (`execute_fetchall`)  
+**MCP tools:** `check_approval_history`, `suggest_allowlist`
+
+Capturing permission events (above) is necessary but not sufficient — without a feedback loop, Claude has no way to consult that history before acting. Two MCP tools close the loop.
+
+### `check_approval_history`
+
+Called **proactively by Claude** before invoking a tool it suspects may need a prompt.
+
+```
+Input:  tool_name="Bash", pattern="wrangler d1", lookback_days=30
+Output: {
+  approved_count: 6,
+  last_seen: "2026-05-11T...",
+  recommendation: "add_to_allowlist",   // ≥5 approvals
+  suggested_rule: "Bash(wrangler d1:*)"
+}
+```
+
+**Recommendation thresholds:**
+
+| `approved_count` | `recommendation`     | Meaning                                      |
+|-----------------|----------------------|----------------------------------------------|
+| 0               | `expect_prompt`      | No history — user will be asked cold         |
+| 1–4             | `proceed`            | Historically approved; expect a prompt       |
+| ≥ 5             | `add_to_allowlist`   | Consistent approval — ready to automate      |
+
+**Usage pattern for Claude:**
+```
+# Before: wrangler d1 execute hybrid-agent-audit --remote ...
+check_approval_history(tool_name="Bash", pattern="wrangler d1")
+→ recommendation=add_to_allowlist
+→ Claude informs user: "This command has been approved 6 times.
+   Consider adding 'Bash(wrangler d1:*)' to your allowlist."
+```
+
+### `suggest_allowlist`
+
+Called **at session start or when prompts feel repetitive**. Analyses the full approval history, normalises raw action strings into minimal glob patterns, excludes anything already covered by the allowlist, and returns a ranked list.
+
+```
+Input:  min_approvals=3, lookback_days=90
+Output: {
+  suggestions: [
+    { rule: "Bash(wrangler d1:*)", approvals: 8, confidence: "high" },
+    { rule: "Bash(git commit:*)",  approvals: 5, confidence: "high" },
+    { rule: "Edit(/Users/samc/Projects/GitHub/**)", approvals: 3, confidence: "medium" },
+  ],
+  total_found: 3,
+  skipped_covered: 12,
+  note: "Add high-confidence rules to ~/.claude/settings.json ..."
+}
+```
+
+Pattern normalisation rules:
+- `Bash` commands → two-word prefix glob (`wrangler d1:*`, `git commit:*`, `npm run:*`)
+- `Read`/`Write`/`Edit` paths → parent directory glob (`/Users/samc/Projects/GitHub/hybrid-agent/**`)
+- `WebFetch` URLs → origin-level glob (`https://api.cloudflare.com/*`)
+- `mcp__*` tools → exact tool name (MCP tools are already fully specified)
+
+Already-covered patterns (matched against existing `permissions.allow` rules including wildcard expansion) are excluded from suggestions and counted in `skipped_covered`.
+
+### The full optimisation loop
+
+```
+1. Session starts
+   → call suggest_allowlist
+   → review high-confidence suggestions
+   → add approved rules to settings.json → fewer prompts next session
+
+2. During session, before a potentially gated action
+   → call check_approval_history(tool, pattern)
+   → if recommend=add_to_allowlist: inform user proactively
+   → if recommend=expect_prompt:    proceed, user will confirm
+   → if recommend=expect_prompt (count=0): warn user before the cold prompt
+
+3. Permission prompt fires (tool not in allowlist)
+   → hook shim writes approval_requested + approval_granted to SQLite
+   → sync_now or 5-min background sync pushes to D1
+   → dashboard Permission Prompts panel updates
+
+4. Over weeks/epochs
+   → prompt count trends down (visible in dashboard)
+   → allowlist grows from suggestions, not reactive approvals
+   → KPI C approval rate and volume become meaningful baselines
+```
+
+### What this does NOT do (yet)
+
+- **Auto-add to allowlist** — suggestions are advisory; a human or a future `apply_allowlist_suggestions` tool must write to `settings.json`
+- **Capture denials** — hook never fires on denial; rate stays 100% until a denial-detection mechanism exists
+- **Cross-machine sync** — allowlist lives in `~/.claude/settings.json` per machine; suggestions are local
+
+---
+
 ## Future Work
 
 Deferred to future design documents:
 
 - **Statistical significance** — bootstrap confidence intervals or Welch's t-test for epoch comparisons
 - **Quality scoring via shadow mode** — pair-wise semantic comparison of Ollama vs Claude outputs for the same input
-- **Audit dashboard** — scorecard JSON consumed by venworxs.com or Propel dashboard; read-only Cloudflare Worker → D1; multi-tenant routing via CF Access JWT claims
+- ~~**Audit dashboard**~~ — **shipped** at `venworxs.com/portal/hybrid-agent` (2026-05-12); D1 binding on Cloudflare Pages; Scorecard, Permission Prompts, Routing Effectiveness, Boundary & Compliance, and Audit Log panels; period toggle (24h/7d/30d); dynamic tenant selector
 - **Long-term retention** — Propel events archived to compressed Parquet after 90 days in SQLite
 - **Tokenizer-true estimation** — periodic recalibration using actual tokenizer calls or shadow-mode measurements
 - **Auto-tuning** — adjust complexity threshold and routing rules based on observed KPI trends
