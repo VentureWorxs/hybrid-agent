@@ -1,6 +1,6 @@
 # hybrid-agent
 
-A hybrid inference routing system for Claude Code that routes tasks between Claude API (complex work) and a local Ollama/Qwen3-235B-A22B instance (bulk/sensitive tasks). See [ARCHITECTURE.md](ARCHITECTURE.md) for full design rationale.
+A hybrid inference routing system for Claude Code that routes tasks between Claude API (complex work) and a local Ollama/Qwen3 instance (bulk/sensitive tasks). See [ARCHITECTURE.md](ARCHITECTURE.md) for full design rationale.
 
 ---
 
@@ -27,6 +27,35 @@ A hybrid inference routing system for Claude Code that routes tasks between Clau
 
 ---
 
+## Pre-Flight
+
+Check these before running setup:
+
+| Requirement | Min version | Check |
+|-------------|-------------|-------|
+| Python | 3.11+ | `python3.11 --version` |
+| Ollama | 0.3+ | `ollama --version` |
+| Qwen3 model pulled | — | `ollama list` |
+| Claude Code CLI | latest | `claude --version` |
+
+**macOS install (if missing):**
+
+```bash
+brew install python@3.11
+brew install ollama
+npm install -g @anthropic-ai/claude-code
+```
+
+**Pull the model (~5 GB):**
+
+```bash
+ollama pull qwen3:8b
+```
+
+> **macOS note:** Use `python3.11` explicitly — the system `python3` may resolve to an older version.
+
+---
+
 ## Setup
 
 ```powershell
@@ -41,7 +70,7 @@ python -m audit.bootstrap --tenant sam-personal
 
 ```bash
 # macOS
-python3 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python -m audit.bootstrap --tenant sam-personal

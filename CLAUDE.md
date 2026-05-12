@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Project Is
 
-A hybrid inference routing system for Claude Code that routes tasks between Claude API (complex work) and a local Ollama/Qwen3-235B-A22B instance (bulk/sensitive tasks). Built in three ADR layers:
+A hybrid inference routing system for Claude Code that routes tasks between Claude API (complex work) and a local Ollama/Qwen3 instance (bulk/sensitive tasks). Built in three ADR layers:
 
 - **ADR-001** — MCP bridge: exposes Ollama as Claude Code tools via stdio MCP server
 - **ADR-001.1** — Orchestration, decision cache, and dual-backend audit log (local SQLite + Cloudflare D1)

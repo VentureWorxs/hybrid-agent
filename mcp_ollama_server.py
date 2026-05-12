@@ -16,7 +16,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
 OLLAMA_BASE = "http://localhost:11434"
-DEFAULT_MODEL = "qwen3:235b-a22b"
+DEFAULT_MODEL = "qwen3:8b"
 DEFAULT_CONTEXT = 8192
 
 DB_PATH = Path(os.environ.get("HYBRID_AGENT_DB_PATH", Path.home() / ".hybrid-agent" / "audit.db"))

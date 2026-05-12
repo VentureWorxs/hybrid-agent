@@ -14,7 +14,7 @@ Claude Code requires cloud API calls for all model inference. Certain workloads 
 - **Privacy-sensitive** — internal code, unreleased IP, PII-adjacent data that should not leave the machine
 - **HIPAA-regulated** — Propel tenant requires documented evidence that PHI never crossed a network boundary
 
-A local Ollama instance running **Qwen3-235B-A22B** (a 235B MoE model with 22B active parameters per forward pass) is available on both development machines. This model is competitive on coding and reasoning tasks at lower complexity levels.
+A local Ollama instance running **Qwen3** is available on both development machines. The specific model variant is chosen per machine based on available RAM (see README Pre-Flight).
 
 Three gaps existed before this architecture:
 
@@ -95,7 +95,7 @@ Expose Ollama as a set of MCP tools, then layer orchestration, decision caching,
 │                                          │                              │
 │  ┌──────────────┐              ┌─────────▼─────────┐                    │
 │  │ Ollama REST  │              │  Ollama (local)   │                    │
-│  │ localhost    │◄─────────────│  Qwen3-235B-A22B  │                    │
+│  │ localhost    │◄─────────────│  Qwen3 (local)    │                    │
 │  │ :11434       │              └───────────────────┘                    │
 │  └──────────────┘                                                       │
 └──────────────────────────────┼───────────────────────────────────────────┘
@@ -155,7 +155,7 @@ Expose Ollama as a set of MCP tools, then layer orchestration, decision caching,
 ### Negative / Risks
 - Qwen3 output quality is lower than Claude on complex reasoning — Claude must validate critical outputs
 - Ollama must be running before Claude Code sessions start (no auto-launch)
-- M3 MacBook Air RAM (16–24 GB) limits Qwen3-235B throughput; expect ~3–8 tok/s
+- Model choice is RAM-constrained on Mac (16 GB → `qwen3:8b`; 24 GB → `qwen3:30b-a3b`); Windows with discrete GPU can run larger models
 - Shadow mode runs every task twice — ~2x Claude API cost during shadow campaigns
 - Write amplification: ~1–3 audit events per agent invocation (~10 KB each in SQLite)
 - Hash-chain rigidity: fixing a buggy event requires emitting a correction event
