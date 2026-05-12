@@ -101,7 +101,7 @@ python cli.py config set --scope global --field operating_mode --value baseline
 python cli.py config set --scope tenant --tenant propel --field audit_sync_enabled --value false
 
 # Audit
-python cli.py audit verify --machine-id <uuid-from-~/.hybrid-agent/machine_id>
+python cli.py audit verify --machine-id $(cat ~/.hybrid-agent/machine_id)
 python cli.py audit backfill --since 2026-01-01T00:00:00Z --dry-run
 
 # Sync worker (runs continuously every 5 minutes)
@@ -110,6 +110,35 @@ python -m audit.sync_worker --tenant sam-personal
 # Cloudflare Worker (deploy once)
 cd worker && npm install && wrangler deploy
 ```
+
+---
+
+## MCP Setup
+
+The MCP server is registered per-client. Each client reads its own config file at launch — restart the app after editing.
+
+### Claude Code
+
+Already configured via `.claude/settings.json` in this repo (project-scoped, picked up automatically).
+
+### Claude Desktop / Cowork
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "ollama-bridge": {
+      "command": "/Users/samc/Projects/GitHub/hybrid-agent/.venv/bin/python",
+      "args": [
+        "/Users/samc/Projects/GitHub/hybrid-agent/mcp_ollama_server.py"
+      ]
+    }
+  }
+}
+```
+
+> Update the paths if the repo is cloned to a different location. The venv must exist (`pip install -r requirements.txt`) before Desktop will be able to spawn the server.
 
 ---
 
